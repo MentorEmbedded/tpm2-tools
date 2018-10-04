@@ -1,0 +1,119 @@
+From 5cee30cbc3dabf6f1dd0876dac9ea9ce9c791f95 Mon Sep 17 00:00:00 2001
+From: Javier Martinez Canillas <javierm@redhat.com>
+Date: Thu, 22 Jun 2017 15:12:29 +0200
+Subject: [PATCH] kdfa: allow to build with OpenSSL 1.1.x
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+OpenSSL version 1.1 has some API changes that makes many data structures
+to be opaque as explained in [0]. The changes causes the following build
+error when using OpenSSL 1.1.x libs:
+
+lib/tpm_kdfa.c: In function ‘tpm_kdfa’:
+lib/tpm_kdfa.c:93:14: error: storage size of ‘ctx’ isn’t known
+     HMAC_CTX ctx;
+              ^~~
+lib/tpm_kdfa.c:94:5: error: implicit declaration of function ‘HMAC_CTX_init’; did you mean ‘HMAC_CTX_new’? [-Werror=implicit-function-declaration]
+     HMAC_CTX_init(&ctx);
+     ^~~~~~~~~~~~~
+     HMAC_CTX_new
+lib/tpm_kdfa.c:150:5: error: implicit declaration of function ‘HMAC_CTX_cleanup’; did you mean ‘HMAC_CTX_get_md’? [-Werror=implicit-function-declaration]
+     HMAC_CTX_cleanup(&ctx);
+     ^~~~~~~~~~~~~~~~
+
+[0]: https://wiki.openssl.org/index.php/OpenSSL_1.1.0_Changes
+
+Signed-off-by: Javier Martinez Canillas <javierm@redhat.com>
+---
+ lib/tpm_kdfa.c | 47 ++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 40 insertions(+), 7 deletions(-)
+
+diff --git a/lib/tpm_kdfa.c b/lib/tpm_kdfa.c
+index 8198c9b..1c23c90 100644
+--- a/lib/tpm_kdfa.c
++++ b/lib/tpm_kdfa.c
+@@ -51,6 +51,34 @@ static const EVP_MD *tpm_algorithm_to_openssl_digest(TPMI_ALG_HASH algorithm) {
+     /* no return, not possible */
+ }
+ 
++static HMAC_CTX *hmac_alloc()
++{
++    HMAC_CTX *ctx;
++#if OPENSSL_VERSION_NUMBER < 0x1010000fL /* OpenSSL 1.1.0 */
++    ctx = malloc(sizeof(*ctx));
++#else
++    ctx = HMAC_CTX_new();
++#endif
++    if (!ctx)
++        return NULL;
++
++#if OPENSSL_VERSION_NUMBER < 0x1010000fL
++    HMAC_CTX_init(ctx);
++#endif
++
++    return ctx;
++}
++
++static void hmac_del(HMAC_CTX *ctx)
++{
++#if OPENSSL_VERSION_NUMBER < 0x1010000fL
++    HMAC_CTX_cleanup(ctx);
++    free(ctx);
++#else
++    HMAC_CTX_free(ctx);
++#endif
++}
++
+ TPM_RC tpm_kdfa(TPMI_ALG_HASH hashAlg,
+         TPM2B *key, char *label, TPM2B *contextU, TPM2B *contextV, UINT16 bits,
+         TPM2B_MAX_BUFFER  *resultKey )
+@@ -90,12 +118,17 @@ TPM_RC tpm_kdfa(TPMI_ALG_HASH hashAlg,
+         return TPM_RC_HASH;
+     }
+ 
+-    HMAC_CTX ctx;
+-    HMAC_CTX_init(&ctx);
+-    int rc = HMAC_Init_ex(&ctx, key->buffer, key->size, md, NULL);
++    HMAC_CTX *ctx = hmac_alloc();
++    if (!ctx) {
++        LOG_ERR("HMAC context allocation failed");
++        return TPM_RC_MEMORY;
++    }
++
++    int rc = HMAC_Init_ex(ctx, key->buffer, key->size, md, NULL);
+     if (!rc) {
+         LOG_ERR("HMAC Init failed: %s", ERR_error_string(rc, NULL));
+-        return TPM_RC_MEMORY;
++        rval = TPM_RC_MEMORY;
++        goto err;
+     }
+ 
+     // TODO Why is this a loop? It appears to only execute once.
+@@ -118,7 +151,7 @@ TPM_RC tpm_kdfa(TPMI_ALG_HASH hashAlg,
+         int c;
+         for(c=0; c < j; c++) {
+             TPM2B_DIGEST *digest = bufferList[c];
+-            int rc =  HMAC_Update(&ctx, digest->b.buffer, digest->b.size);
++            int rc =  HMAC_Update(ctx, digest->b.buffer, digest->b.size);
+             if (!rc) {
+                 LOG_ERR("HMAC Update failed: %s", ERR_error_string(rc, NULL));
+                 rval = TPM_RC_MEMORY;
+@@ -127,7 +160,7 @@ TPM_RC tpm_kdfa(TPMI_ALG_HASH hashAlg,
+         }
+ 
+         unsigned size = sizeof(tmpResult.t.buffer);
+-        int rc = HMAC_Final(&ctx, tmpResult.t.buffer, &size);
++        int rc = HMAC_Final(ctx, tmpResult.t.buffer, &size);
+         if (!rc) {
+             LOG_ERR("HMAC Final failed: %s", ERR_error_string(rc, NULL));
+             rval = TPM_RC_MEMORY;
+@@ -147,7 +180,7 @@ TPM_RC tpm_kdfa(TPMI_ALG_HASH hashAlg,
+     resultKey->t.size = bytes;
+ 
+ err:
+-    HMAC_CTX_cleanup(&ctx);
++    hmac_del(ctx);
+ 
+     return rval;
+ }

@@ -1,0 +1,35 @@
+From 1321aee7d2a3be248d32b012ee6d2a4452435690 Mon Sep 17 00:00:00 2001
+From: Philip Tricca <flihp@twobit.us>
+Date: Thu, 27 Jul 2017 21:08:53 -0700
+Subject: [PATCH] gcc7: Change two case fallthrough conditions that upset gcc7.
+
+Signed-off-by: Philip Tricca <flihp@twobit.us>
+---
+ tools/main.c                 | 2 +-
+ tools/tpm2_dump_capability.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+Index: tpm2-tools/tools/main.c
+===================================================================
+--- tpm2-tools.orig/tools/main.c
++++ tpm2-tools/tools/main.c
+@@ -62,6 +62,7 @@ main (int   argc,
+         fprintf (stderr,
+                  "failed to load manpage, check your environment / PATH\n");
+         /* no break */
++	exit (1);
+     case 2:
+         exit (1);
+     }
+Index: tpm2-tools/tools/tpm2_dump_capability.c
+===================================================================
+--- tpm2-tools.orig/tools/tpm2_dump_capability.c
++++ tpm2-tools/tools/tpm2_dump_capability.c
+@@ -596,6 +596,7 @@ dump_tpm_capability (TPMU_CAPABILITIES
+         dump_command_attr_array (capabilities->command.commandAttributes,
+                                  capabilities->command.count);
+         /* no break */
++	return 1;
+     default:
+         return 1;
+     }
